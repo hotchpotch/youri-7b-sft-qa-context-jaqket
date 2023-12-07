@@ -1,8 +1,15 @@
 # %%
-DEBUG = True
+from __future__ import annotations
+import os
+
+import wandb
+
+wandb_run = wandb.init(project="youri-7b-stf-qa-context-jaqket")
+
+DEBUG = os.environ.get("DEBUG", False)
 
 MODEL_NAME = "rinna/youri-7b-instruction"
-OUTPUT_DIR = f"./output_v3_{MODEL_NAME.split('/')[-1]}"
+OUTPUT_DIR = f"./pretrained_lora_{MODEL_NAME.split('/')[-1]}"
 
 if DEBUG:
     OUTPUT_DIR = OUTPUT_DIR + "_debug"
@@ -138,7 +145,7 @@ while len(response_template_ids) > 0:
     if len(response_template_ids) == 0:
         raise ValueError("response_template_ids is not included in prompt_ids")
 # 実際にマッチした部分の token_ids を使う
-print(response_template_ids)
+print("response_template_ids: ", response_template_ids)
 
 # %%
 from trl import SFTTrainer, DataCollatorForCompletionOnlyLM
@@ -146,11 +153,13 @@ from trl import SFTTrainer, DataCollatorForCompletionOnlyLM
 collator = DataCollatorForCompletionOnlyLM(response_template_ids, tokenizer=tokenizer)
 
 if DEBUG:
-    train_ds = train_ds.shuffle(seed=42).select(range(50))
-    valid_ds = valid_ds.shuffle(seed=42).select(range(10))
+    train_ds = train_ds.shuffle(seed=42).select(range(5))
+    valid_ds = valid_ds.shuffle(seed=42).select(range(3))
 else:
     # 全件 valid すると時間がかかるので、目安程度の一部だけにする
     valid_ds = valid_ds.shuffle(seed=42).select(range(50))
+
+display(train_ds.shape, valid_ds.shape)
 
 # %%
 tokenizer.pad_token = tokenizer.eos_token
@@ -208,7 +217,7 @@ if DEBUG:
     training_args.learning_rate = 2e-4
     training_args.gradient_accumulation_steps = 4
     training_args.logging_steps = 2
-    training_args.eval_steps = 13
+    training_args.eval_steps = 11
     training_args.warmup_steps = 2
 
 
@@ -224,7 +233,11 @@ trainer = SFTTrainer(
     args=training_args,
 )
 
+print("Training start")
+
 trainer.train()  # type: ignore
+
+print("Training finished")
 
 # %%
 from shutil import rmtree
@@ -257,9 +270,13 @@ tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
 tokenizer.pad_token = tokenizer.eos_token
 
 valid_df = valid_ds.data.to_pandas()
+if DEBUG:
+    valid_df = valid_df.head(10)
+
+print("正解のチェック: ", valid_df.shape)
 
 # %%
-target_n = 4
+target_n = 0
 prompt_template = build_prompt(
     valid_df["question"][target_n], valid_df["context"][target_n]
 )
@@ -336,38 +353,29 @@ for i in tqdm(range(len(valid_df))):
 import wandb
 
 valid_df["is_correct"] = valid_df["answer"] == valid_df["pred"]
-# print("完全一致の正解率")
-# display(valid_df["is_correct"].mean())
 wandb.log({"完全一致の正解率": valid_df["is_correct"].mean()})
 
 # %%
-wandb.Table(
-    dataframe=valid_df[["question", "answer", "pred", "is_correct", "context"]][
-        valid_df["is_correct"] == False
-    ]
-)
+# 間違ったデータを記録
+incorrect_df = valid_df[valid_df["is_correct"] == False][
+    ["question", "answer", "pred", "is_correct", "context"]
+]
+
+table_incorrect = wandb.Table(dataframe=incorrect_df.copy())
+wandb.log({"table_incorrect": table_incorrect})
 
 # %%
 # 部分一致の正解率を表示
 valid_df["is_correct"] = valid_df.apply(lambda x: x["answer"] in x["pred"], axis=1)
-# print("部分一致の正解率:")
-# print(valid_df["is_correct"].mean())
 wandb.log({"部分一致の正解率": valid_df["is_correct"].mean()})
 
 # %%
-valid_df[["question", "answer", "pred", "is_correct"]].head(100)
-# 間違ったものだけを表示
-wandb.Table(
-    dataframe=valid_df[["question", "answer", "pred", "is_correct", "context"]][
-        valid_df["is_correct"] == False
-    ]
-)
+# 間違ったものだけを記録
+incorrect_partial_df = valid_df[valid_df["is_correct"] == False][
+    ["question", "answer", "pred", "is_correct", "context"]
+]
 
-# %%
-valid_df.shape
+table_incorrect_partial = wandb.Table(dataframe=incorrect_partial_df)
+wandb.log({"table_incorrect_partial": table_incorrect_partial})
 
-# %%
-# merge_model = model.merge_and_unload()
-
-# %%
-# merge_model.save_pretrained("./output_merge_model/")
+wandb.finish()
