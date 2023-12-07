@@ -156,7 +156,7 @@ if DEBUG:
     train_ds = train_ds.shuffle(seed=42).select(range(5))
     valid_ds = valid_ds.shuffle(seed=42).select(range(3))
 else:
-    # 全件 valid すると時間がかかるので、目安程度の一部だけにする
+    # 全件 eval すると時間がかかるので、目安程度の一部だけにする
     valid_ds = valid_ds.shuffle(seed=42).select(range(50))
 
 display(train_ds.shape, valid_ds.shape)
@@ -182,7 +182,7 @@ class PeftSavingCallback(TrainerCallback):
 
 
 peft_config = LoraConfig(
-    r=64,
+    r=32,
     lora_alpha=16,
     lora_dropout=0.05,
     bias="none",
@@ -205,8 +205,8 @@ training_args = TrainingArguments(
     logging_dir="./logs",
     logging_steps=2,
     save_steps=5,
-    eval_steps=30,
-    warmup_steps=10,
+    eval_steps=15,
+    warmup_steps=5,
     max_grad_norm=0.3,
     weight_decay=0.01,
     save_total_limit=1,
