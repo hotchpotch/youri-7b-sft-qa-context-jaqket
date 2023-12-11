@@ -164,3 +164,4 @@ wandb/*
 logs/*
 tmp*
 pretrained_*/*
+awq_cache/*
