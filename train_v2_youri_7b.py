@@ -382,6 +382,8 @@ def qa(model, tokenizer, question, context, build_prompt_fn=build_prompt):
     output = output.replace(prompt, "")
     # eos_token 以降を取り除く
     output = output.split(tokenizer.eos_token)[0]
+    # bos_token 以前を取り除く
+    output = output.split(tokenizer.bos_token)[0]
     return output.strip()
 
 

@@ -145,7 +145,7 @@ def formatting_prompts_func(example, return_dict=False):
         question = example["question"][i]
         context = example["context"][i]
         answer = example["answer"][i]
-        text = build_prompt(question, context) + answer
+        text = build_prompt(question, context) + answer + "</s>"
         output_texts.append(text)
     if return_dict:
         return {"input_text": output_texts}
@@ -388,6 +388,10 @@ def qa(model, tokenizer, question, context, build_prompt_fn=build_prompt):
     output = output.replace(prompt, "")
     # eos_token 以降を取り除く
     output = output.split(tokenizer.eos_token)[0]
+    # </s> 以降を取り除く
+    output = output.split("</s>")[0]
+    #if DEBUG:
+    #    print("DEBUG", output)
     return output.strip().split("\n")[0]
 
 
