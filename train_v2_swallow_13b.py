@@ -1,13 +1,15 @@
-# 大元の "hotchpotch/jaqket_v1_qa_wikija_context" の train / valid 分割方法がよくないので、再度分割して学習させる
-# Swallow-13b をベースに
+"""
+Swallow-13b をベースに、以下の学習データを使う
+
+- "hotchpotch/jaqket_v1_qa_wikija_context" の train / valid 分割方法がよくないので、テストデータをtrainから省いたもの
+- "shunk031/JGLUE" の JSQuAD train の一部
+
+"""
 
 # %%
 from __future__ import annotations
 import os
 
-import wandb
-
-wandb_run = wandb.init(project="youri-7b-stf-qa-context-jaqket")
 
 DEBUG = os.environ.get("DEBUG", False)
 
@@ -70,8 +72,49 @@ print(len(train_df), len(valid_df))
 train_df["context"] = train_df["context"].apply(lambda x: "\n".join(x) + "\n")
 valid_df["context"] = valid_df["context"].apply(lambda x: "\n".join(x) + "\n")
 
-train_ds = datasets.Dataset.from_pandas(train_df)
-valid_ds = datasets.Dataset.from_pandas(valid_df)
+jsquad_ds = datasets.load_dataset("shunk031/JGLUE", name="JSQuAD")
+def jsquad_to_df(ds):
+    def convert_jsquad(example):
+        answer_texts = example['answers']['text']
+        answer_len = len(set(answer_texts))
+        answer = answer_texts[0]
+        context = example['context'].replace(' [SEP] ', ' ')
+        context_len = len(context)
+        return {
+            "answers_len": answer_len
+            ,
+            "answer": answer,
+            "context": context,
+            "context_len": context_len,
+        }
+    ds = ds.map(convert_jsquad, num_proc=11)
+    df = ds.to_pandas()
+    # random shuffle
+    df = df.sample(frac=1).reset_index(drop=True)
+    # answer_len == 1
+    df = df[df['answers_len'] == 1]
+    # context_len > 70
+    df = df[df['context_len'] > 140]
+    df = df.groupby('title').first().reset_index()
+    # null があれば削除
+    df = df.dropna()
+    return df
+
+jsd_valid_df = jsquad_to_df(jsquad_ds['validation'])
+jsd_train_df = jsquad_to_df(jsquad_ds['train'])
+
+print("JSQuAD", jsd_train_df.shape, jsd_valid_df.shape)
+
+train_df = pd.concat([train_df, jsd_train_df])
+valid_df = pd.concat([valid_df, jsd_valid_df])
+
+print("合計", train_df.shape, valid_df.shape)
+
+target_columns = ["question", "answer", "context"]
+
+
+train_ds = datasets.Dataset.from_pandas(train_df[target_columns])
+valid_ds = datasets.Dataset.from_pandas(valid_df[target_columns])
 
 display(train_ds.shape, valid_ds.shape)
 
@@ -169,10 +212,11 @@ from trl import SFTTrainer, DataCollatorForCompletionOnlyLM
 collator = DataCollatorForCompletionOnlyLM(response_template_ids, tokenizer=tokenizer)
 
 if DEBUG:
-    train_ds = train_ds.shuffle(seed=42).select(range(5))
+    train_ds = train_ds.shuffle(seed=42).select(range(30))
     valid_ds = valid_ds.shuffle(seed=42).select(range(3))
 else:
     # 全件 eval すると時間がかかるので、目安程度の一部だけにする
+    train_ds = train_ds.shuffle(seed=42)
     valid_ds = valid_ds.shuffle(seed=42).select(range(50))
 
 display(train_ds.shape, valid_ds.shape)
@@ -184,6 +228,11 @@ tokenizer.pad_token = tokenizer.eos_token
 from peft import LoraConfig  # type: ignore
 import os
 from transformers import TrainerCallback, TrainingArguments
+
+
+import wandb
+
+wandb_run = wandb.init(project="youri-7b-stf-qa-context-jaqket")
 
 
 class PeftSavingCallback(TrainerCallback):
@@ -339,7 +388,7 @@ def qa(model, tokenizer, question, context, build_prompt_fn=build_prompt):
     output = output.replace(prompt, "")
     # eos_token 以降を取り除く
     output = output.split(tokenizer.eos_token)[0]
-    return output.strip()
+    return output.strip().split("\n")[0]
 
 
 print(
