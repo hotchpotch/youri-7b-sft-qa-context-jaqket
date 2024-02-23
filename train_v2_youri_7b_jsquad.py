@@ -1,13 +1,13 @@
 """
 youri-7b-instructionをベースに、以下の学習データを使う
 
-- "hotchpotch/jaqket_v1_qa_wikija_context" の train / valid 分割方法がよくないので、テストデータをtrainから省いたもの
 - "shunk031/JGLUE" の JSQuAD train の一部
 
 """
 
 # %%
 from __future__ import annotations
+
 import os
 
 import wandb
@@ -17,7 +17,7 @@ wandb_run = wandb.init(project="youri-7b-stf-qa-context-jaqket")
 DEBUG = os.environ.get("DEBUG", False)
 
 MODEL_NAME = "rinna/youri-7b-instruction"
-OUTPUT_DIR = f"./pretrained_lora_v2_{MODEL_NAME.split('/')[-1]}"
+OUTPUT_DIR = f"./pretrained_lora_v2_jsquad_{MODEL_NAME.split('/')[-1]}"
 
 if DEBUG:
     OUTPUT_DIR = OUTPUT_DIR + "_debug"
@@ -46,25 +46,26 @@ def build_prompt(
     return prompt
 
 
+import datasets
+
 # %%
 import pandas as pd
 from IPython.display import display
-import datasets
 
-ds = datasets.load_dataset("hotchpotch/jaqket_v1_qa_wikija_context")
-train_ds = ds["train"]  # type: ignore
-valid_ds = ds["validation"]  # type: ignore
+# ds = datasets.load_dataset("hotchpotch/jaqket_v1_qa_wikija_context")
+# train_ds = ds["train"]  # type: ignore
+# valid_ds = ds["validation"]  # type: ignore
 
-# 大元の "hotchpotch/jaqket_v1_qa_wikija_context" の train / valid 分割方法がよくないので、再度分割する
+# # 大元の "hotchpotch/jaqket_v1_qa_wikija_context" の train / valid 分割方法がよくないので、再度分割する
 
-train_df = train_ds.to_pandas()
-valid_df = valid_ds.to_pandas()
-df = pd.concat([train_df, valid_df])
+# train_df = train_ds.to_pandas()
+# valid_df = valid_ds.to_pandas()
+# df = pd.concat([train_df, valid_df])
 
-valid_target_section_names = ['リーダーボードテスト問題', 'ライブコンペテスト問題']
-valid_df = df[df.section.isin(valid_target_section_names)]
-train_df = df[~df.section.isin(valid_target_section_names)]
-print(len(train_df), len(valid_df))
+# valid_target_section_names = ['リーダーボードテスト問題', 'ライブコンペテスト問題']
+# valid_df = df[df.section.isin(valid_target_section_names)]
+# train_df = df[~df.section.isin(valid_target_section_names)]
+# print(len(train_df), len(valid_df))
 
 
 # context は list なので、 "\n" で結合する
@@ -72,40 +73,43 @@ train_df["context"] = train_df["context"].apply(lambda x: "\n".join(x) + "\n")
 valid_df["context"] = valid_df["context"].apply(lambda x: "\n".join(x) + "\n")
 
 jsquad_ds = datasets.load_dataset("shunk031/JGLUE", name="JSQuAD")
+
+
 def jsquad_to_df(ds):
     def convert_jsquad(example):
-        answer_texts = example['answers']['text']
+        answer_texts = example["answers"]["text"]
         answer_len = len(set(answer_texts))
         answer = answer_texts[0]
-        context = example['context'].replace(' [SEP] ', ' ')
+        context = example["context"].replace(" [SEP] ", " ")
         context_len = len(context)
         return {
-            "answers_len": answer_len
-            ,
+            "answers_len": answer_len,
             "answer": answer,
             "context": context,
             "context_len": context_len,
         }
+
     ds = ds.map(convert_jsquad, num_proc=11)
     df = ds.to_pandas()
     # random shuffle
     df = df.sample(frac=1).reset_index(drop=True)
     # answer_len == 1
-    df = df[df['answers_len'] == 1]
+    df = df[df["answers_len"] == 1]
     # context_len > 70
-    df = df[df['context_len'] > 140]
-    df = df.groupby('title').first().reset_index()
+    df = df[df["context_len"] > 140]
+    df = df.groupby("title").head(2).reset_index()
     # null があれば削除
     df = df.dropna()
     return df
 
-jsd_valid_df = jsquad_to_df(jsquad_ds['validation'])
-jsd_train_df = jsquad_to_df(jsquad_ds['train'])
+
+jsd_valid_df = jsquad_to_df(jsquad_ds["validation"])
+jsd_train_df = jsquad_to_df(jsquad_ds["train"])
 
 print("JSQuAD", jsd_train_df.shape, jsd_valid_df.shape)
 
-train_df = pd.concat([train_df, jsd_train_df])
-valid_df = pd.concat([valid_df, jsd_valid_df])
+train_df = jsd_train_df  # pd.concat([train_df, jsd_train_df])
+valid_df = jsd_valid_df  # pd.concat([valid_df, jsd_valid_df])
 
 print("合計", train_df.shape, valid_df.shape)
 
@@ -119,7 +123,7 @@ display(train_ds.shape, valid_ds.shape)
 
 # %%
 import torch
-from transformers import AutoTokenizer, AutoModelForCausalLM, BitsAndBytesConfig
+from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 
 tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
 
@@ -206,7 +210,7 @@ while len(response_template_ids) > 0:
 print("response_template_ids: ", response_template_ids)
 
 # %%
-from trl import SFTTrainer, DataCollatorForCompletionOnlyLM
+from trl import DataCollatorForCompletionOnlyLM, SFTTrainer
 
 collator = DataCollatorForCompletionOnlyLM(response_template_ids, tokenizer=tokenizer)
 
@@ -223,9 +227,10 @@ display(train_ds.shape, valid_ds.shape)
 # %%
 tokenizer.pad_token = tokenizer.eos_token
 
+import os
+
 # %%
 from peft import LoraConfig  # type: ignore
-import os
 from transformers import TrainerCallback, TrainingArguments
 
 
@@ -298,9 +303,10 @@ trainer.train()  # type: ignore
 
 print("Training finished")
 
+from pathlib import Path
+
 # %%
 from shutil import rmtree
-from pathlib import Path
 
 trainer.save_model(output_dir=OUTPUT_DIR)
 
