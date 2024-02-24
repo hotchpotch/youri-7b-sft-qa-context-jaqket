@@ -100,7 +100,7 @@ def jsquad_to_df(ds):
     df = df[df["answers_len"] == 1]
     # context_len > 70
     df = df[df["context_len"] > 140]
-    df = df.groupby("title").head(2).reset_index()
+    df = df.groupby("title").head(12).reset_index()
     # null があれば削除
     df = df.dropna()
     return df

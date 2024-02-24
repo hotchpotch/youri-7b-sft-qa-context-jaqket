@@ -165,3 +165,4 @@ logs/*
 tmp*
 pretrained_*/*
 awq_cache/*
+pretrained_*

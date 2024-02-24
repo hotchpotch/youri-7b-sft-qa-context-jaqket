@@ -69,8 +69,8 @@ from IPython.display import display
 
 
 # context は list なので、 "\n" で結合する
-train_df["context"] = train_df["context"].apply(lambda x: "\n".join(x) + "\n")
-valid_df["context"] = valid_df["context"].apply(lambda x: "\n".join(x) + "\n")
+# train_df["context"] = train_df["context"].apply(lambda x: "\n".join(x) + "\n")
+# valid_df["context"] = valid_df["context"].apply(lambda x: "\n".join(x) + "\n")
 
 jsquad_ds = datasets.load_dataset("shunk031/JGLUE", name="JSQuAD")
 
@@ -97,7 +97,7 @@ def jsquad_to_df(ds):
     df = df[df["answers_len"] == 1]
     # context_len > 70
     df = df[df["context_len"] > 140]
-    df = df.groupby("title").head(2).reset_index()
+    df = df.groupby("title").head(12).reset_index()
     # null があれば削除
     df = df.dropna()
     return df
